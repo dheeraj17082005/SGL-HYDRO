@@ -1,0 +1,52 @@
+databases:
+  - name: sgl-hydro-db
+    databaseName: sgl_cng_db
+    user: sgl_user
+    plan: free
+    region: singapore
+    postgresMajorVersion: "15"
+    ipAllowList: []
+
+services:
+  - type: web
+    name: sgl-hydro-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sgl-hydro-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: VEHICLE_VERIFICATION_PROVIDER
+        value: mock
+      - key: SPRING_JPA_SHOW_SQL
+        value: "false"
+
+  - type: web
+    name: sgl-hydro-frontend
+    runtime: static
+    region: singapore
+    rootDir: cng frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          type: web
+          name: sgl-hydro-api
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_STATION_ID
+        value: "1"
+      - key: VITE_CAMERA_ID
+        value: "1"

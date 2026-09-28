@@ -14,7 +14,8 @@ RUN addgroup -S sgl && adduser -S sgl -G sgl
 USER sgl:sgl
 
 COPY --from=build /app/target/*.jar app.jar
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

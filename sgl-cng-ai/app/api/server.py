@@ -2,7 +2,9 @@ import asyncio
 import time
 import cv2
 import logging
+import os
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from app.pipeline.anpr_pipeline import AnprPipeline
@@ -13,6 +15,15 @@ app = FastAPI(
     title="SGL CNG AI - Production ANPR API",
     description="AI-Powered Vehicle & License Plate Recognition Service for Sabarmati Gas Limited",
     version="2.0.0"
+)
+
+allowed_origins = [origin.strip() for origin in os.getenv("AI_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 pipeline = AnprPipeline(send_to_backend=True)

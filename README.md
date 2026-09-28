@@ -30,6 +30,23 @@ The backend uses mock vehicle-registration verification by default, and mock hyd
 
 The first build can take several minutes because it builds the services and initializes the AI dependencies/models.
 
+## Deploy a free demo on Render
+
+The repository includes a `render.yaml` Blueprint for a public React static site, Spring Boot API, and Render Postgres database. It keeps the Python ANPR service off the free cloud plan so the model runs on your laptop for the live-camera demo.
+
+1. Sign in to Render and choose **New → Blueprint**.
+2. Connect `dheeraj17082005/SGL-HYDRO` on the `main` branch.
+3. Review the resources in `render.yaml` and deploy the Blueprint. It creates the API and database in Singapore; the React static site is served through Render's global CDN.
+4. Open the frontend URL shown in the Render dashboard. The API URL is connected automatically by the Blueprint.
+
+Render's free web services sleep after 15 minutes without traffic and can take about a minute to wake. Free Render Postgres is limited to 1 GB and expires 30 days after creation, so this setup is for a short demo, not durable storage. See [Render's free-instance limits](https://render.com/docs/free).
+
+### Live camera for the demo
+
+The public Render frontend and the AI service running on your laptop are on different networks. A deployed HTTPS page cannot reach the laptop's private `localhost` service automatically. The reliable camera demonstration is to run the complete Docker Compose stack locally and open `http://localhost:5174`; the camera frames then reach the local Python AI service through the frontend proxy.
+
+If you specifically need the public Render page to use the laptop's AI, the laptop AI service needs a publicly reachable HTTPS tunnel, the frontend must be rebuilt with that tunnel URL in `VITE_AI_API_BASE_URL`, and the local AI process must be started with `AI_ALLOWED_ORIGINS` set to the Render frontend origin. The AI endpoint is not authenticated, so do not expose it through an unrestricted tunnel; use an access-controlled tunnel for a brief demo.
+
 ## Start with Docker Compose
 
 Open a terminal in this project folder and run:
