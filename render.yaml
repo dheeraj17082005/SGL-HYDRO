@@ -32,7 +32,6 @@ services:
   - type: web
     name: sgl-hydro-frontend
     runtime: static
-    region: singapore
     rootDir: cng frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
