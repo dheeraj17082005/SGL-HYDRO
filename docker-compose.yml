@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sgl_cng_db}
+      POSTGRES_USER: ${DB_USERNAME:-sgl_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-sgl_password_123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-sgl_user} -d ${DB_NAME:-sgl_cng_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8082}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-sgl_cng_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-sgl_user}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-sgl_password_123}
+      JWT_SECRET: ${JWT_SECRET:-local-only-change-this-demo-signing-key-before-deployment}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      VEHICLE_VERIFICATION_PROVIDER: ${VEHICLE_VERIFICATION_PROVIDER:-mock}
+      RAPIDAPI_KEY: ${RAPIDAPI_KEY:-}
+      RAPIDAPI_HOST: ${RAPIDAPI_HOST:-vehicle-rc-information.p.rapidapi.com}
+      RAPIDAPI_URL: ${RAPIDAPI_URL:-https://vehicle-rc-information.p.rapidapi.com/}
+
+  ai:
+    build:
+      context: ./sgl-cng-ai
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      BACKEND_URL: http://app:8080
+      STATION_ID: ${STATION_ID:-1}
+      CAMERA_ID: ${CAMERA_ID:-1}
+      SEND_BACKEND: "true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
+      interval: 20s
+      timeout: 8s
+      retries: 10
+      start_period: 120s
+
+  frontend:
+    build:
+      context: ./cng frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - app
+      - ai
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5174}:80"
+
+volumes:
+  postgres_data:

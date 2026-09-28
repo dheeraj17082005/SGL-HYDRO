@@ -1,0 +1,14 @@
+package com.sabarmati.cng.journey.entity;
+
+public enum EventType {
+    ENTRY_DETECTED,
+    REGISTRATION_VERIFIED,
+    HYDRO_TEST_VERIFIED,
+    COMPLIANCE_APPROVED,
+    COMPLIANCE_REJECTED,
+    QUEUE_ENTERED,
+    BAY_ASSIGNED,
+    FUELING_STARTED,
+    FUELING_COMPLETED,
+    EXIT_DETECTED
+}

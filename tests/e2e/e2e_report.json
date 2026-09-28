@@ -1,0 +1,322 @@
+{
+  "timestamp": "2026-09-28T08:13:17Z",
+  "totalTests": 40,
+  "totalPassed": 40,
+  "totalFailed": 0,
+  "durationSeconds": 0.155,
+  "allPassed": true,
+  "tiers": {
+    "1": {
+      "name": "Tier 1: Feature Coverage",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "results": [
+        {
+          "name": "test_t1_anpr_standard_plate_recognition",
+          "displayName": "ANPR Standard Plate Recognition (GJ, DL, MH, KA, TN)",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t1_anpr_character_normalization",
+          "displayName": "ANPR Positional Correction & 'IND' Prefix Stripping",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_anpr_confidence_weighting",
+          "displayName": "ANPR Confidence Weighting (40% detector + 60% OCR >= 0.85)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_anpr_duplicate_suppression_cooldown",
+          "displayName": "ANPR Cooldown Duplicate Suppression within 30s",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_anpr_api_dispatch_contract",
+          "displayName": "ANPR POST /api/v1/anpr/detections Ingestion Contract",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_compliance_rto_lookup",
+          "displayName": "RTO Vehicle Lookup & Attribute Extraction",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_compliance_registration_validity",
+          "displayName": "Registration Validity (Active vs Invalid/Suspended)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_compliance_fitness_validity",
+          "displayName": "Vehicle Fitness Certificate Date Validation",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_compliance_peso_hydro_test_validity",
+          "displayName": "PESO Cylinder Hydro-Test Validity (Rule 33/35)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_compliance_decision_matrix",
+          "displayName": "Compliance Decision Matrix (All Valid -> ELIGIBLE)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_operator_queue_entry",
+          "displayName": "Operator Queue Entry (ENTERED -> IN_QUEUE)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_operator_queue_fifo_order",
+          "displayName": "Station Queue FIFO Sequencing (queueEntryTime ASC)",
+          "passed": true,
+          "duration": 0.0247,
+          "error": null
+        },
+        {
+          "name": "test_t1_operator_bay_allocation",
+          "displayName": "Fueling Bay Allocation (IN_QUEUE -> BAY_ASSIGNED)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_operator_dispenser_interlock_fueling",
+          "displayName": "Dispenser Interlock & Fueling Lifecycle Completion",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t1_operator_manual_verification",
+          "displayName": "Operator Manual Registration Verification Breakdown",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        }
+      ]
+    },
+    "2": {
+      "name": "Tier 2: Boundary & Corner Cases",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "results": [
+        {
+          "name": "test_t2_syntax_empty_and_blank_plates",
+          "displayName": "Input Syntax: Empty, Blank, and Whitespace Strings",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_syntax_malformed_delimiters",
+          "displayName": "Input Syntax: Hyphens, Irregular Spaces & Lowercase",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_syntax_all_state_and_bh_prefixes",
+          "displayName": "Input Syntax: All 37 State/UT Codes + Bharat (BH) Series",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t2_syntax_out_of_bounds_length",
+          "displayName": "Input Syntax: Out-of-Bounds Plate Length (<8 or >10 chars)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_syntax_special_characters",
+          "displayName": "Input Syntax: Special Characters & Non-Alphanumeric Noise",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_hydro_missing_record_returns_unknown",
+          "displayName": "PESO Boundary: Missing Hydro-Test MUST return UNKNOWN & NOT_ELIGIBLE",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_hydro_expired_date_boundaries",
+          "displayName": "PESO Boundary: Expired Hydro-Test Date Classification",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_hydro_future_valid_dates",
+          "displayName": "PESO Boundary: Future Valid Hydro-Test Dates (1-3 years)",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_hydro_expiring_today",
+          "displayName": "PESO Boundary: Hydro-Test Expiring Exactly Today",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_hydro_corrupt_certificate_data",
+          "displayName": "PESO Boundary: Missing/Corrupt Certificate Metadata",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_temporal_duplicate_detection_within_30s",
+          "displayName": "Temporal Boundary: Rapid Re-detections within 30s Cooldown",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_temporal_interleaved_vehicle_arrivals",
+          "displayName": "Temporal Boundary: Rapid Interleaved Multi-Vehicle Arrivals",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t2_temporal_cooldown_expiration",
+          "displayName": "Temporal Boundary: Detection After Cooldown Expiration (30s+)",
+          "passed": true,
+          "duration": 0.0651,
+          "error": null
+        },
+        {
+          "name": "test_t2_transition_out_of_order_queue_and_bay",
+          "displayName": "State Boundary: Blocked Queue Entry & Premature Bay Allocation",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t2_transition_out_of_order_fueling_and_exit",
+          "displayName": "State Boundary: Fueling Before Bay & Exit Before Fueling",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        }
+      ]
+    },
+    "3": {
+      "name": "Tier 3: Cross-Feature Combinations",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "results": [
+        {
+          "name": "test_t3_pairwise_anpr_to_queue",
+          "displayName": "Pairwise: ANPR Detection -> Journey Creation -> Compliance -> Queue Entry",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t3_pairwise_interlock_blocked_alert",
+          "displayName": "Pairwise: Non-Compliant Vehicle -> Dispenser Interlock BLOCKED -> Safety Alert",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t3_pairwise_manual_lookup_supervisor_override",
+          "displayName": "Pairwise: Manual Lookup -> Supervisor Override -> Audit Log Trail",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t3_pairwise_bay_concurrency_interlock",
+          "displayName": "Pairwise: Bay Allocation Concurrency & Duplicate Occupancy Prevention",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        },
+        {
+          "name": "test_t3_pairwise_station_telemetry_aggregation",
+          "displayName": "Pairwise: Real-Time Telemetry Dynamic Aggregation Across Lifecycle",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        }
+      ]
+    },
+    "4": {
+      "name": "Tier 4: Real-World Operational Scenarios",
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "results": [
+        {
+          "name": "test_t4_scenario_peak_hour_fleet_arrival",
+          "displayName": "Scenario 1: Peak Hour Commercial Fleet Arrival (10 vehicles, 6 bays, FIFO)",
+          "passed": true,
+          "duration": 0.0625,
+          "error": null
+        },
+        {
+          "name": "test_t4_scenario_high_risk_hydro_interlock",
+          "displayName": "Scenario 2: High-Risk Safety Interlock Enforcement (Expired Hydro-Test)",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t4_scenario_unregistered_foreign_vehicle",
+          "displayName": "Scenario 3: Unregistered / Foreign State Vehicle Graceful Handling",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t4_scenario_kiosk_manual_override_lifecycle",
+          "displayName": "Scenario 4: Kiosk Manual Verification & Supervisor Override Lifecycle",
+          "passed": true,
+          "duration": 0.0001,
+          "error": null
+        },
+        {
+          "name": "test_t4_scenario_camera_disconnect_and_recovery",
+          "displayName": "Scenario 5: Edge Camera Disconnect & Recovery During Fueling Cycle",
+          "passed": true,
+          "duration": 0.0,
+          "error": null
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+package com.sabarmati.cng.compliance.dto;
+
+public enum ComplianceResult {
+    ELIGIBLE,
+    VEHICLE_NOT_FOUND,
+    REGISTRATION_INVALID,
+    HYDRO_TEST_EXPIRED,
+    HYDRO_TEST_MISSING,
+    VERIFICATION_UNAVAILABLE,
+    HYDRO_TEST_VERIFICATION_UNAVAILABLE
+}

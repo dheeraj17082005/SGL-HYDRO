@@ -1,0 +1,33 @@
+# Security & Environment
+.env
+.env.local
+*.pem
+*.key
+
+# Maven Build Artifacts
+target/
+*.class
+*.jar
+*.war
+
+# Python Virtualenv & Cache
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+debug/
+
+# Node & Frontend
+node_modules/
+dist/
+.output/
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+*.log
+.env.docker
+
+# Generated AI debug images
+sgl-cng-ai/debug_output/

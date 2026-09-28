@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.docker.example
+**/node_modules
+**/dist
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/.DS_Store
+/sgl-cng-ai
+/cng frontend
+/target
