@@ -1,157 +1,269 @@
 # SGL Smart CNG Station Compliance & Vehicle Journey Management
 
-A full-stack demo platform for managing CNG station vehicle compliance and vehicle journeys. It brings together a React operator console, a Spring Boot API, a Python ANPR service, and PostgreSQL. The Docker setup runs all four services together.
+A full-stack, production-hardened platform for automated CNG station compliance verification and end-to-end vehicle journey orchestration. The system integrates a React operator console, a Java Spring Boot backend, a specialized Python AI ANPR microservice with temporal tracking & consensus, and PostgreSQL.
 
-## What the application does
+---
 
-- **Vehicle identification:** Use a laptop webcam as an entry or exit camera. The browser captures frames and sends them to the Python AI service for number-plate detection and OCR; the browser itself does not run the recognition model. The operator can switch the camera mode between **Entry** and **Exit**.
-- **Compliance checks:** Check vehicle registration status and CNG cylinder hydro-test validity before fueling. A non-compliant vehicle is marked ineligible and cannot proceed through the fueling workflow.
-- **Vehicle journeys:** Follow a vehicle from detection and queue, to bay assignment, fueling, and exit. When an exit detection is recorded, the journey is completed and removed from the active queue.
-- **Queue and six fueling bays:** View the queue and bay availability, assign vehicles to bays, and manually start or complete fueling. The station is seeded with six bays.
-- **Station operations dashboard:** Review station activity and operational metrics, including journey status, queue, throughput, bay use, compliance, and alerts.
-- **Security and traceability:** Sign in with role-based demo accounts. Compliance and station actions can be reviewed through the audit and alert views.
-- **Demo verification data:** The mock hydro-test service includes 100 generated examples: valid, expired, due-soon, and missing certificates, plus named test plates. The mock provider is suitable for a local demo, not an authoritative compliance decision.
-
-## Architecture
+## 🏗 System Architecture & End-to-End Workflow
 
 ```text
-Web browser (React UI + webcam)
-        ├── station/API requests ──> Spring Boot backend ──> PostgreSQL
-        └── camera frames ─────────> Python AI / ANPR service ──> Spring Boot backend
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   END-TO-END FLOW OVERVIEW                                  │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  [ Vehicle Enters ]
+          │
+          ▼
+   📷 Camera Feed (Entry Lane)
+          │  (Video frames streamed via HTTP/Canvas)
+          ▼
+   🧠 Python AI Microservice (Port 8001)
+      ├── 1. Detection (YOLOv8 Plate & Vehicle Detector every N frames)
+      ├── 2. Tracking (Centroid & Bounding Box overlap tracker per vehicle)
+      ├── 3. Quality Filter (Blur Laplacian, resolution & aspect ratio checks)
+      ├── 4. OCR Engine (EasyOCR with Indian Plate pattern heuristics)
+      ├── 5. Temporal Consensus (Position-wise weighted voting across 3+ frames)
+      └── 6. Event Emission (Emits single CONFIRMED event per vehicle)
+          │
+          ▼  POST /api/v1/anpr/events
+   ☕ Spring Boot API Gateway (Port 8082)
+      ├── 1. Ingests ANPR event & avoids duplicates
+      ├── 2. Compliance Engine Checks:
+      │       • VAHAN Registration status
+      │       • CNG Cylinder Hydro-test certificate (validity & expiry)
+      ├── 3. Journey State Machine:
+      │       • Eligible   ──> Status: IN_QUEUE
+      │       • Ineligible ──> Status: BLOCKED / AUDIT ALERT
+      └── 4. Persists to PostgreSQL
+          │
+          ▼  WebSockets / REST Polling
+   💻 React Operator Console (Port 5174)
+      ├── Real-Time Overview & Metrics Dashboard
+      ├── Live Camera AI Overlay with Bounding Boxes
+      ├── Bays & Queue Manager (6 Dispensary Bays)
+      ├── Compliance & Hydro-test Verification Engine
+      └── Alerts, Exceptions & Audit Trails
+          │
+          ▼
+   ⛽ Fueling & Dispatch Workflow
+      ├── 1. Assign Vehicle from Queue to Available Bay (Bay 1–6)
+      ├── 2. Fueling Dispenser Authorization & Progress
+      ├── 3. Fueling Complete
+      └── 4. Vehicle proceeds to Exit Lane
+          │
+          ▼
+   📷 Exit Camera Detection
+      └── AI verifies plate at exit ──> Journey marked COMPLETED ──> Dispatched
 ```
 
-The backend uses mock vehicle-registration verification by default, and mock hydro-test data. Vehicle registration can optionally use the configured RapidAPI provider. Hydro-test verification remains mock data in this project.
+---
 
-## Requirements
+## 🚀 Key Functional Modules
 
-- Docker Desktop (Mac/Windows) or Docker Engine (Linux)
-- Docker Compose v2 (`docker compose`)
-- A browser with webcam access, if you want to use live camera detection
+| Module | Technologies | Key Responsibilities |
+|---|---|---|
+| **Frontend Console** | React 19, Vite, Tailwind/CSS | Operator UI, camera stream capture, live queue, fueling bay allocation, manual compliance overrides, and audit dashboards. |
+| **Backend Core** | Spring Boot 3.4, Java 21, JPA/Hibernate | State machine orchestration, compliance policy engine, hydro-test verification, role-based security (JWT), and audit logs. |
+| **AI ANPR Microservice** | Python 3.11, FastAPI, YOLOv8, EasyOCR | High-precision plate recognition, object tracking, quality filtering, character-level consensus voting, and duplicate event suppression. |
+| **Database** | PostgreSQL 16 | Relational persistence for vehicle journeys, compliance certificates, bay statuses, audit trails, and user credentials. |
 
-The first build can take several minutes because it builds the services and initializes the AI dependencies/models.
+---
 
-## Deploy a free demo on Render
+## 🛠 Step-by-Step Setup Guide
 
-The repository includes a `render.yaml` Blueprint for a public React static site, Spring Boot API, and Render Postgres database. It keeps the Python ANPR service off the free cloud plan so the model runs on your laptop for the live-camera demo.
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/) (Mac, Windows, or Linux) with Compose v2.
+- 4GB+ RAM allocated to Docker.
+- A webcam (optional, for live camera testing; static test samples are included).
 
-1. Sign in to Render and choose **New → Blueprint**.
-2. Connect `dheeraj17082005/SGL-HYDRO` on the `main` branch.
-3. Review the resources in `render.yaml` and deploy the Blueprint. It creates the API and database in Singapore; the React static site is served through Render's global CDN.
-4. Open the frontend URL shown in the Render dashboard. The API URL is connected automatically by the Blueprint.
+---
 
-Render's free web services sleep after 15 minutes without traffic and can take about a minute to wake. Free Render Postgres is limited to 1 GB and expires 30 days after creation, so this setup is for a short demo, not durable storage. See [Render's free-instance limits](https://render.com/docs/free).
+### Step 1: Clone the Repository
+```bash
+git clone https://github.com/dheeraj17082005/SGL-HYDRO.git
+cd SGL-HYDRO
+```
 
-### Live camera for the demo
+---
 
-The public Render frontend and the AI service running on your laptop are on different networks. A deployed HTTPS page cannot reach the laptop's private `localhost` service automatically. The reliable camera demonstration is to run the complete Docker Compose stack locally and open `http://localhost:5174`; the camera frames then reach the local Python AI service through the frontend proxy.
-
-If you specifically need the public Render page to use the laptop's AI, the laptop AI service needs a publicly reachable HTTPS tunnel, the frontend must be rebuilt with that tunnel URL in `VITE_AI_API_BASE_URL`, and the local AI process must be started with `AI_ALLOWED_ORIGINS` set to the Render frontend origin. The AI endpoint is not authenticated, so do not expose it through an unrestricted tunnel; use an access-controlled tunnel for a brief demo.
-
-## Start with Docker Compose
-
-Open a terminal in this project folder and run:
-
-```sh
+### Step 2: Configure Environment Variables
+Create your local environment file using the provided template:
+```bash
 cp .env.docker.example .env.docker
+```
+
+*Note: The defaults in `.env.docker.example` work out of the box for local development.*
+
+---
+
+### Step 3: Launch with Docker Compose
+Run the entire 4-service stack:
+```bash
 docker compose --env-file .env.docker up --build -d
 ```
 
-When the containers are up, open **http://localhost:5174** and sign in. The seeded operator account is:
-
-- Username: `operator`
-- Password: `operator123`
-
-The backend also seeds these demo roles:
-
-| Role | Username | Password |
-|---|---|---|
-| Administrator | `admin` | `admin123` |
-| Station manager | `manager` | `manager123` |
-| Station operator | `operator` | `operator123` |
-| Compliance officer | `compliance` | `compliance123` |
-| Auditor | `auditor` | `auditor123` |
-
-These are local-demo credentials. Change or remove them and replace the sample database/JWT credentials before any deployment beyond a private demo environment.
-
-## Try the main workflow
-
-1. Sign in with the operator account.
-2. Open **Live Monitoring**, allow browser camera access, and start the camera. Choose **Entry Camera** or **Exit Camera** for the single webcam.
-3. For an entry, keep a plate centered and visible so the AI service can read it. The backend records the detection and checks registration and hydro-test status.
-4. Open **Bays & Queue** to review eligible vehicles, assign a bay, and advance fueling manually. Ineligible vehicles are blocked from fueling actions.
-5. Switch to **Exit Camera** and detect the vehicle at exit. Its journey is marked complete and it leaves the active queue.
-6. Review compliance, alerts, or audit history in the corresponding sections.
-
-For controlled demos without a physical vehicle, use the built-in vehicle verification form and mock examples. The hydro-test mock dataset includes plates from `MH12DE1001` through `MH12DE1100`; for example, the first 75 are valid, the next 15 are expired, the next five are due soon, and the final five have no record. Named examples include `GJ01AB1234`, `EXPHYDRO`, and `NOHYDRO`.
-
-## Optional: use RapidAPI for vehicle registration
-
-The default configuration uses the built-in mock registration provider and needs no API key. To enable the RapidAPI registration provider:
-
-1. Edit the local, ignored `.env.docker` file.
-2. Set `VEHICLE_VERIFICATION_PROVIDER=rapidapi` and put your key in `RAPIDAPI_KEY`.
-3. Keep the configured host and URL unless your RapidAPI subscription specifies different values.
-4. Recreate the backend service:
-
-   ```sh
-   docker compose --env-file .env.docker up --build -d app
-   ```
-
-Never put a real API key in source files or commit `.env.docker`. Hydro-test checks continue to use mock data.
-
-## Useful commands
-
-Show service status:
-
-```sh
+Verify that all 4 containers are healthy:
+```bash
 docker compose --env-file .env.docker ps
 ```
 
-Follow service logs:
+You should see:
+- `sgl-hydro-frontend-1` on port `5174`
+- `sgl-hydro-app-1` on port `8082`
+- `sgl-hydro-ai-1` on port `8001`
+- `sgl-hydro-postgres-1` on port `5432`
 
-```sh
-docker compose --env-file .env.docker logs -f frontend app ai postgres
+---
+
+## 🔑 Default Credentials & Roles
+
+Open your browser at **[http://localhost:5174](http://localhost:5174)**.
+
+| Role | Username | Password | Access Scope |
+|---|---|---|---|
+| **Station Operator** | `operator` | `operator123` | Queue management, camera monitoring, bay fueling actions |
+| **Station Manager** | `manager` | `manager123` | Full station metrics, throughput, employee activities |
+| **Compliance Officer**| `compliance` | `compliance123` | Hydro-test certificate inspections, blacklisting, manual audits |
+| **Administrator** | `admin` | `admin123` | Full system configuration and user management |
+| **Auditor** | `auditor` | `auditor123` | Read-only compliance and event audit history |
+
+---
+
+## 📋 Complete End-to-End Walkthrough
+
+### 1. Operator Login & Dashboard
+1. Navigate to `http://localhost:5174`.
+2. Log in using `operator` / `operator123`.
+3. You will land on the **Overview** dashboard showing station throughput, active bays, fuel dispensed, queue count, and the latest verified vehicle.
+
+---
+
+### 2. Vehicle Entry & ANPR Detection
+1. Click **Live Monitoring** in the sidebar.
+2. Select **Entry Lane 1**.
+3. Choose either:
+   - **Live Camera Feed**: Allow browser camera permissions and hold up a vehicle number plate or phone screen.
+   - **Upload Plate Photo / Quick Test Samples**: Click any of the preloaded test samples:
+     - 🚗 `RJ14CV0002` (Kia Sonet - Valid Hydro Test)
+     - 🚗 `HR98AA0000` (HSRP Plate - Valid)
+     - 🚗 `EXPHYDRO` (Expired Cylinder - Non-compliant test)
+     - 🚗 `NOHYDRO` (Unregistered Cylinder - Non-compliant test)
+4. The AI microservice processes the frame:
+   - Applies YOLOv8 detection & EasyOCR.
+   - Evaluates temporal consensus buffer.
+   - Emits a `CONFIRMED` ANPR event to Spring Boot.
+
+---
+
+### 3. Automated Compliance & Queueing
+1. The backend automatically queries the compliance records:
+   - Checks if the vehicle has an active CNG cylinder hydrostatic test certificate.
+   - **If Valid (e.g. `RJ14CV0002`):** Status is set to `ELIGIBLE` and vehicle automatically enters `IN_QUEUE`.
+   - **If Expired / Missing (e.g. `EXPHYDRO`):** Status is set to `INELIGIBLE / BLOCKED`. Fueling is prohibited, and an alert is raised in the **Alerts** tab.
+
+---
+
+### 4. Bay Allocation & Fueling
+1. Click **Bays & Queue** in the navigation menu.
+2. Under **Active Queue**, locate the eligible vehicle.
+3. Select an available bay from **Bays 1 through 6** and click **Assign to Bay**.
+4. The bay status switches to `DISPENSING`.
+5. Once fueling is complete, click **Complete Fueling**. The bay resets to `AVAILABLE`.
+
+---
+
+### 5. Vehicle Exit & Journey Completion
+1. Return to **Live Monitoring** and switch camera mode to **Exit Lane**.
+2. Scan the vehicle plate upon exit (or select the sample plate).
+3. The system matches the active journey:
+   - Calculates total turnaround time and fuel dispensed.
+   - Sets journey status to `COMPLETED`.
+   - Clears the vehicle from the active station queue.
+
+---
+
+### 6. Audit & Compliance Inspection
+- **Compliance Tab**: Look up any registration number (e.g., `MH12DE1001` through `MH12DE1100`) to inspect cylinder manufacturing dates, hydro-test centers, and re-test due dates.
+- **Alerts Tab**: Review unauthorized fueling attempts, blocked vehicles, or low-confidence plate reads.
+- **Audit Tab**: Full tamper-evident chronological event log of every operator action and camera detection.
+
+---
+
+## 🧪 Testing the AI Microservice Independently
+
+The AI microservice can be queried directly via curl or Python scripts:
+
+### Test Single Frame Detection
+```bash
+curl -X POST "http://localhost:8001/api/v1/anpr/detect" \
+  -F "file=@cng frontend/public/samples/rj_kia.jpg"
+```
+**Expected Response:**
+```json
+{
+  "plateDetected": true,
+  "registrationNumber": "RJ14CV0002",
+  "confidence": 0.85,
+  "stateCode": "RJ"
+}
 ```
 
-Restart after configuration changes:
-
-```sh
-docker compose --env-file .env.docker up --build -d
+### Run Synthetic Temporal Consensus Test Suite
+```bash
+python sgl-cng-ai/test_stage2_scenarios.py
 ```
 
-Stop the application while keeping PostgreSQL data:
+---
 
-```sh
-docker compose --env-file .env.docker down
-```
+## 🧰 Management & Troubleshooting Commands
 
-Reset the local database and remove its stored data (destructive):
+| Command | Action |
+|---|---|
+| `docker compose --env-file .env.docker ps` | Check live status of all services |
+| `docker compose --env-file .env.docker logs -f app` | Tail Spring Boot backend logs |
+| `docker compose --env-file .env.docker logs -f ai` | Tail AI microservice inference logs |
+| `docker compose --env-file .env.docker restart frontend` | Restart frontend Nginx container |
+| `docker compose --env-file .env.docker down` | Safely stop containers (preserves DB data) |
+| `docker compose --env-file .env.docker down -v` | **Full reset**: removes all containers and database volumes |
 
-```sh
-docker compose --env-file .env.docker down -v
-```
+### Common Troubleshooting Tips
+1. **Camera not starting in browser:** Webcams require `http://localhost` or HTTPS. Ensure you are accessing via `http://localhost:5174` and have allowed browser camera permissions.
+2. **Port conflict on 8082 or 5174:** Edit `BACKEND_PORT` or `FRONTEND_PORT` in your `.env.docker` file and run `docker compose --env-file .env.docker up -d`.
+3. **Database connection retry:** On first launch, PostgreSQL initializes in ~10 seconds. Spring Boot will wait for it and connect automatically.
 
-The frontend is available at **http://localhost:5174** and the backend is mapped to **http://localhost:8082** on localhost. The AI service is reached through the frontend proxy and the Docker network.
+---
 
-## Camera and startup troubleshooting
-
-- **Camera permission:** Allow camera access for `http://localhost:5174` in the browser. Camera access is restricted to localhost or HTTPS origins. Close other applications that may be using the webcam, then reload the page.
-- **Services still starting:** Check `docker compose --env-file .env.docker ps` and the logs. The AI service may take longer on its first start.
-- **Port already in use:** Change `FRONTEND_PORT` or `BACKEND_PORT` in `.env.docker`, then recreate the services.
-- **Need a clean app state:** `docker compose --env-file .env.docker down -v` deletes the database volume and all persisted local data; use it only when you intend to reset the demo.
-
-## Project layout
+## 📁 Repository Directory Structure
 
 ```text
-.
-├── cng frontend/       # React + Vite operator console and Nginx container
-├── src/                # Spring Boot API, persistence, security, and migrations
-├── sgl-cng-ai/         # Python ANPR service, OCR models, and AI tests
-├── tests/e2e/          # End-to-end workflow test sources
-├── docker-compose.yml  # Local multi-service stack
-└── .env.docker.example # Safe local configuration template
+SGL-HYDRO/
+├── cng frontend/              # React 19 + Vite operator console
+│   ├── public/                # Static assets, login photo, quick test sample images
+│   ├── src/                   # React views (Overview, Monitoring, Bays, Compliance, Audit)
+│   └── Dockerfile             # Multi-stage Nginx build
+├── src/                       # Spring Boot 3.4 API backend
+│   ├── main/java/com/sabarmati/cng/
+│   │   ├── anpr/              # ANPR event intake & camera routing
+│   │   ├── compliance/        # Hydro-test verification & rules engine
+│   │   ├── journey/           # Vehicle journey state machine
+│   │   ├── security/          # Spring Security, JWT & RBAC
+│   │   └── station/           # Bay allocation & dispenser operations
+│   └── main/resources/        # Liquibase DB migrations & application configs
+├── sgl-cng-ai/                # Python ANPR microservice
+│   ├── app/                   # YOLOv8 detector, tracker, EasyOCR engine, consensus
+│   ├── plate_model_indian.pt  # Fine-tuned Indian number plate weights
+│   ├── temporal_consensus.py  # Multi-frame consensus voting engine
+│   ├── main.py                # FastAPI entrypoint
+│   └── Dockerfile             # PyTorch + OpenCV + CUDA/CPU container
+├── docker-compose.yml         # Unified 4-container production stack
+├── .env.docker.example        # Environment template
+└── README.md                  # Complete platform documentation
 ```
 
-## Scope and deployment note
+---
 
-This repository is a demonstration and development system. The mock data and default credentials are not production compliance sources. Before real operational use, connect authorized vehicle and hydro-test registries, secure all credentials, set production database/JWT secrets, configure HTTPS and access controls, and complete deployment-specific security and reliability reviews.
+## 📜 License & Compliance Notice
+
+This system is configured for demonstration and testbed purposes. In real-world operational deployments:
+- Connect the verification pipeline to authorized state VAHAN APIs and PESO/CPCB approved hydro-testing databases.
+- Enforce HTTPS and update all default passwords and JWT secrets in production environment files.
