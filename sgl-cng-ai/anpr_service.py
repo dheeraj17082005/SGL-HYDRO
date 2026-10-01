@@ -31,19 +31,32 @@ class ANPRService:
         print("[ANPRService] Initializing unified ANPR engine...")
         
         # 1. Load YOLOv8 plate detector
-        if model_path and os.path.exists(model_path):
-            self.model_path = model_path
-        elif os.path.exists("best.pt"):
-            self.model_path = "best.pt"
-        elif os.path.exists("/app/best.pt"):
-            self.model_path = "/app/best.pt"
-        else:
-            print("[ANPRService] Fetching YOLOv8 weights from Hugging Face...")
-            self.model_path = hf_hub_download(
-                repo_id="foduucom/vehicle-license-plate-detection",
-                filename="best.pt",
-                local_dir="."
-            )
+        candidate_paths = [
+            model_path,
+            "plate_model_indian.pt",
+            "/app/plate_model_indian.pt",
+            "license_plate_yolov8n.pt",
+            "/app/license_plate_yolov8n.pt",
+            "best.pt",
+            "/app/best.pt"
+        ]
+        self.model_path = None
+        for p in candidate_paths:
+            if p and os.path.exists(p):
+                self.model_path = p
+                break
+
+        if not self.model_path:
+            print("[ANPRService] No local plate model found, attempting download...")
+            try:
+                self.model_path = hf_hub_download(
+                    repo_id="maazsajid/license-plate-yolov8",
+                    filename="best.pt",
+                    local_dir="."
+                )
+            except Exception as e:
+                print(f"[ANPRService] Hugging Face download failed: {e}. Falling back to default YOLOv8n.")
+                self.model_path = "yolov8n.pt"
             
         print(f"[ANPRService] Loading YOLO model from {self.model_path}...")
         self.detector = YOLO(self.model_path)
