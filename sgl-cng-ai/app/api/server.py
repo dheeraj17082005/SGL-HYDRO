@@ -17,10 +17,10 @@ app = FastAPI(
     version="2.0.0"
 )
 
-allowed_origins = [origin.strip() for origin in os.getenv("AI_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+allowed_origins = [origin.strip() for origin in os.getenv("AI_ALLOWED_ORIGINS", "*").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=allowed_origins if allowed_origins else ["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -35,9 +35,15 @@ class HealthResponse(BaseModel):
 class AnprRecognitionResponse(BaseModel):
     plateDetected: bool
     registrationNumber: Optional[str] = None
-    confidence: float
-    detectorConfidence: float
-    ocrConfidence: float
+    rawOcr: Optional[str] = None
+    trackId: Optional[int] = None
+    confidence: float = 0.0
+    vehicleConfidence: Optional[float] = 0.0
+    plateConfidence: Optional[float] = 0.0
+    detectorConfidence: Optional[float] = 0.0
+    ocrConfidence: Optional[float] = 0.0
+    finalConfidence: Optional[float] = 0.0
+    statusState: Optional[str] = "UNREADABLE"
     timestamp: str
     reason: Optional[str] = None
 
@@ -45,7 +51,7 @@ class StreamStartRequest(BaseModel):
     rtspUrl: str
     stationId: int = 1
     cameraId: int = 1
-    frameInterval: float = 0.5 # process 1 frame every 0.5s
+    frameInterval: float = 0.5
 
 class StreamStatusResponse(BaseModel):
     status: str
@@ -63,8 +69,6 @@ async def recognize_plate(file: UploadFile = File(...)):
 
     try:
         contents = await file.read()
-        # The caller (frontend or RTSP worker) owns Spring ingestion after
-        # recognition. Do not also dispatch from this per-frame HTTP route.
         result, _ = pipeline.process_image(contents, dispatch_to_backend=False)
         return result
     except Exception as e:
@@ -103,28 +107,30 @@ def stop_stream(streamId: str):
     return {
         "status": "NOT_FOUND",
         "streamId": streamId,
-        "message": "Stream ID not active"
+        "message": f"Stream worker {streamId} was not running."
     }
 
 def run_stream_worker(stream_id, rtsp_url, station_id, camera_id, frame_interval):
-    logger.info(f"Worker {stream_id} starting RTSP capture from: {rtsp_url}")
+    logger.info(f"RTSP Stream Worker started: {stream_id} ({rtsp_url})")
     cap = cv2.VideoCapture(rtsp_url)
+    frame_count = 0
 
-    buffer = []
     while active_streams.get(stream_id, {}).get("running", False):
         ret, frame = cap.read()
         if not ret:
-            logger.warning(f"RTSP stream disconnected for {stream_id}. Reconnecting...")
+            logger.warning(f"RTSP stream read failed for {stream_id}. Retrying...")
             time.sleep(2.0)
             cap = cv2.VideoCapture(rtsp_url)
             continue
 
-        buffer.append(frame)
-        if len(buffer) >= 3:
-            pipeline.process_video_frames(buffer, station_id=station_id, camera_id=camera_id)
-            buffer = []
+        frame_count += 1
+        if frame_count % 3 == 0:
+            try:
+                pipeline.process_image(frame, station_id=station_id, camera_id=camera_id, frame_id=frame_count, dispatch_to_backend=True)
+            except Exception as e:
+                logger.error(f"Error in stream processing: {e}")
 
-        cv2.waitKey(int(frame_interval * 1000))
+        time.sleep(frame_interval)
 
     cap.release()
-    logger.info(f"Worker {stream_id} stopped.")
+    logger.info(f"RTSP Stream Worker stopped: {stream_id}")

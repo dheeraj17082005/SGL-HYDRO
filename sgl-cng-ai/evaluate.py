@@ -75,7 +75,9 @@ def run_evaluation():
             if predicted_text == expected_text:
                 ocr_correct_count += 1
                 e2e_correct_count += 1
+                print(f"  [PASS] {path}: expected '{expected_text}', got '{predicted_text}'")
             else:
+                print(f"  [FAIL] {path}: expected '{expected_text}', got '{predicted_text}' (reason: {res.get('reason')})")
                 if res.get("reason") in failure_categories:
                     failure_categories[res["reason"]] += 1
                 elif predicted_text is not None and predicted_text != expected_text:

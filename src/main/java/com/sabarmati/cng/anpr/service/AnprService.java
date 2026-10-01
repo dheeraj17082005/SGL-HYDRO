@@ -158,7 +158,8 @@ public class AnprService {
         );
 
         if (complianceResponse.isEligible()) {
-            journey.setStatus(JourneyStatus.ENTERED);
+            journey.setStatus(JourneyStatus.IN_QUEUE);
+            journey.setQueueEntryTime(LocalDateTime.now());
             journey.setComplianceStatus(ComplianceStatus.ELIGIBLE);
 
             JourneyEvent regEvent = JourneyEvent.builder()
@@ -199,8 +200,8 @@ public class AnprService {
                     .registrationVerified(true)
                     .hydroTestVerified(true)
                     .complianceStatus(ComplianceStatus.ELIGIBLE)
-                    .journeyStatus(JourneyStatus.ENTERED)
-                    .message("Vehicle is eligible for fueling")
+                    .journeyStatus(JourneyStatus.IN_QUEUE)
+                    .message("Vehicle is eligible and automatically added to fueling queue")
                     .build();
         } else {
             journey.setStatus(JourneyStatus.BLOCKED);

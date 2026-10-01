@@ -95,7 +95,7 @@ public class VehicleService {
         return registrationNumber.replaceAll("[^a-zA-Z0-9]", "").toUpperCase();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public VehicleVerificationResponse verifyVehicle(VehicleVerificationRequest request) {
         String cleanRegNumber = sanitizeRegistrationNumber(request.getRegistrationNumber());
         if (cleanRegNumber == null || cleanRegNumber.isBlank()) {

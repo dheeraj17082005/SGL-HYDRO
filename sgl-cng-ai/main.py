@@ -1,89 +1,164 @@
-import argparse
-import json
 import os
-import sys
 import cv2
-import uvicorn
-from app.pipeline.anpr_pipeline import AnprPipeline
+import numpy as np
+import time
+from fastapi import FastAPI, UploadFile, File, Form, Query
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional, Dict, Any
 
-def main():
-    parser = argparse.ArgumentParser(description="SGL CNG AI - Production ANPR Service CLI & Stream Processor")
-    parser.add_argument("--image", type=str, help="Path to input image file")
-    parser.add_argument("--video", type=str, help="Path to input video file")
-    parser.add_argument("--rtsp", type=str, default=os.getenv("RTSP_URL"), help="RTSP stream URL (rtsp://...) [env: RTSP_URL]")
-    parser.add_argument("--webcam", action="store_true", help="Capture from default webcam")
-    parser.add_argument("--camera", type=int, nargs="?", const=0, default=None, help="Run interactive webcam debugger with camera index (e.g. --camera 0)")
-    parser.add_argument("--interactive", action="store_true", help="Run interactive OpenCV HUD GUI window")
-    parser.add_argument("--send-backend", action="store_true", default=os.getenv("SEND_BACKEND", "true").lower() in ("true", "1", "yes"), help="Send verified detections to Spring Boot backend [env: SEND_BACKEND]")
-    parser.add_argument("--backend-url", type=str, default=os.getenv("BACKEND_URL", "http://localhost:8080"), help="Spring Boot backend URL [env: BACKEND_URL]")
-    parser.add_argument("--station-id", type=int, default=int(os.getenv("STATION_ID", "1")), help="CNG Station ID [env: STATION_ID]")
-    parser.add_argument("--camera-id", type=int, default=int(os.getenv("CAMERA_ID", "1")), help="ANPR Camera ID [env: CAMERA_ID]")
-    parser.add_argument("--frame-skip", type=int, default=int(os.getenv("FRAME_SKIP", "5")), help="Frame skip interval (process every Nth frame) [env: FRAME_SKIP]")
-    parser.add_argument("--cooldown-seconds", type=float, default=float(os.getenv("COOLDOWN_SECONDS", "30.0")), help="Cooldown seconds for duplicate suppression [env: COOLDOWN_SECONDS]")
-    parser.add_argument("--max-frames", type=int, default=None, help="Max frames to process before exiting")
-    parser.add_argument("--debug", action="store_true", help="Generate annotated debug image")
-    parser.add_argument("--diagnose", action="store_true", help="Run 7-stage diagnostic pipeline and output detailed report")
-    parser.add_argument("--server", action="store_true", help="Launch FastAPI server")
-    parser.add_argument("--port", type=int, default=8001, help="FastAPI server port (default 8001)")
+from anpr_service import ANPRService
+from temporal_consensus import CameraStreamProcessor
 
-    args = parser.parse_args()
+app = FastAPI(title="SGL CNG Station Operations - Unified ANPR Service")
 
-    if args.diagnose:
-        from diagnose_pipeline import run_diagnostics
-        src = args.image or args.video or (args.camera if args.camera is not None else 0)
-        run_diagnostics(source=src, backend_url=args.backend_url, station_id=args.station_id, camera_id=args.camera_id)
-        return
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    if args.server:
-        print(f"Starting SGL CNG ANPR API Server on port {args.port}...")
-        uvicorn.run("app.api.server:app", host="0.0.0.0", port=args.port, reload=False)
-        return
+# Global services (initialized on startup)
+anpr_service: Optional[ANPRService] = None
+stream_processor: Optional[CameraStreamProcessor] = None
 
-    pipeline = AnprPipeline(
-        backend_url=args.backend_url,
-        station_id=args.station_id,
-        camera_id=args.camera_id,
-        send_to_backend=args.send_backend,
-        frame_skip=args.frame_skip,
-        cooldown_seconds=args.cooldown_seconds
+@app.on_event("startup")
+async def startup_event():
+    global anpr_service, stream_processor
+    print("[SERVER STARTUP] Loading Unified ANPR Service...")
+    model_path = "/app/best.pt" if os.path.exists("/app/best.pt") else "best.pt"
+    anpr_service = ANPRService.get_instance(model_path=model_path)
+    
+    # Initialize Camera Stream Processor with temporal consensus
+    stream_processor = CameraStreamProcessor(
+        anpr_service=anpr_service,
+        frame_skip=int(os.getenv("FRAME_SKIP", "3")),
+        min_observations=int(os.getenv("MIN_OBSERVATIONS", "3")),
+        min_consensus_score=float(os.getenv("MIN_CONSENSUS_SCORE", "0.80")),
+        min_ocr_confidence=float(os.getenv("MIN_OCR_CONFIDENCE", "0.55")),
+        cooldown_seconds=float(os.getenv("COOLDOWN_SECONDS", "30.0")),
+        debug_mode=True
     )
+    print("[SERVER STARTUP] Unified ANPR Service & Temporal Consensus Processor ready.")
 
-    if args.camera is not None:
-        pipeline.run_interactive_webcam(camera_index=args.camera, station_id=args.station_id, camera_id=args.camera_id)
+@app.get("/health")
+def health():
+    return {
+        "status": "UP",
+        "service": "Unified ANPR & Temporal Consensus",
+        "detectorLoaded": anpr_service is not None
+    }
 
-    elif args.image:
-        if not os.path.exists(args.image):
-            print(json.dumps({"error": f"Image file not found: {args.image}"}))
-            sys.exit(1)
+# =========================================================================
+# 1. STATIC IMAGE ENDPOINT (Verified in Stage 1)
+# =========================================================================
+@app.post("/api/v1/anpr/recognize")
+async def recognize_static_image(file: UploadFile = File(...)):
+    """
+    Accepts full vehicle image or crop.
+    Re-uses unified ANPRService:
+    Detection -> Exact Crop (pad=0) -> HSRP Morph Open -> EasyOCR -> Indian Normalization.
+    """
+    global anpr_service
+    if anpr_service is None:
+        anpr_service = ANPRService.get_instance()
+        
+    image_bytes = await file.read()
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return {"plateDetected": False, "error": "Invalid image format"}
+        
+    result = anpr_service.detect_and_read(img)
+    return result
 
-        result, debug_img = pipeline.process_image(args.image, generate_debug=args.debug)
-        print(json.dumps(result, indent=2))
+# =========================================================================
+# 2. LIVE CAMERA STREAM FRAME ENDPOINT (Stage 2 Temporal Consensus)
+# =========================================================================
+@app.post("/api/v1/anpr/stream/frame")
+async def process_camera_frame(
+    file: UploadFile = File(...),
+    station_id: int = Query(default=1),
+    camera_id: int = Query(default=1),
+    timestamp: Optional[float] = Query(default=None)
+):
+    """
+    Accepts camera frame stream.
+    Applies:
+    - Frame decimation (every N frames)
+    - Quality filtering (rejects blurry / occluded frames)
+    - IoU plate tracking across frames
+    - Multi-frame temporal buffer (5-10 frames)
+    - Weighted voting + character-level consensus
+    - Duplicate event suppression (30s cooldown)
+    """
+    global stream_processor
+    if stream_processor is None:
+        return {"error": "Stream processor not initialized"}
+        
+    image_bytes = await file.read()
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    
+    if frame is None:
+        return {"error": "Invalid frame bytes"}
+        
+    ts = timestamp or time.time()
+    result = stream_processor.process_frame(frame, timestamp=ts)
+    return result
 
-        if args.debug and debug_img is not None:
-            debug_path = "debug_output.jpg"
-            cv2.imwrite(debug_path, debug_img)
-            print(f"Saved debug image to: {debug_path}")
-
-    elif args.video or args.rtsp or args.webcam:
-        if args.interactive and args.webcam:
-            pipeline.run_interactive_webcam(camera_index=0, station_id=args.station_id, camera_id=args.camera_id)
-        else:
-            source = 0 if args.webcam else (args.rtsp if args.rtsp else args.video)
-            if isinstance(source, str) and not source.startswith("rtsp://") and not os.path.exists(source):
-                print(json.dumps({"error": f"Video source file not found: {source}"}))
-                sys.exit(1)
-
-            result = pipeline.process_stream(
-                source=source,
-                frame_skip=args.frame_skip,
-                station_id=args.station_id,
-                camera_id=args.camera_id,
-                max_frames=args.max_frames
-            )
-            print(json.dumps(result, indent=2))
-
-    else:
-        parser.print_help()
+# =========================================================================
+# 3. LIVE TRACKER INSPECTOR & TELEMETRY
+# =========================================================================
+@app.get("/api/v1/anpr/tracks")
+def get_active_tracks():
+    """Returns live active tracks, consensus state, and streaming FPS metrics."""
+    global stream_processor
+    if stream_processor is None:
+        return {"tracks": [], "metrics": {}}
+        
+    tracks_info = []
+    for tid, t in stream_processor.tracker.tracks.items():
+        tracks_info.append({
+            "trackId": t.track_id,
+            "status": t.status,
+            "bbox": t.bbox,
+            "lastSeen": t.last_seen,
+            "observations": len(t.observations),
+            "confirmedPlate": t.confirmed_plate,
+            "consensusScore": t.consensus_score,
+            "recentCandidates": [o["text"] for o in t.observations[-5:]]
+        })
+        
+    now = time.time()
+    elapsed = max(0.001, now - stream_processor.start_time)
+    
+    return {
+        "activeTracksCount": len([t for t in tracks_info if t["status"] != "LOST"]),
+        "tracks": tracks_info,
+        "metrics": {
+            "fps": round(stream_processor.total_frames / elapsed, 1),
+            "detectionFps": round(stream_processor.detection_frames / elapsed, 1),
+            "ocrCallsPerSec": round(stream_processor.ocr_calls / elapsed, 2),
+            "avgOcrLatencyMs": round(stream_processor.total_ocr_latency_ms / max(1, stream_processor.ocr_calls), 2),
+            "totalFrames": stream_processor.total_frames,
+            "totalOcrCalls": stream_processor.ocr_calls
+        }
+    }
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    import uvicorn
+    parser = argparse.ArgumentParser(description="Unified ANPR FastAPI Service")
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8001")))
+    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--server", action="store_true")
+    parser.add_argument("--backend-url", type=str, default=None)
+    args, _ = parser.parse_known_args()
+    if args.backend_url:
+        os.environ["BACKEND_URL"] = args.backend_url
+    uvicorn.run(app, host=args.host, port=args.port)
+

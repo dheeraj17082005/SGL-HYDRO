@@ -51,8 +51,11 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        .requestMatchers("/api/v1/anpr/detections").permitAll()
+                        .requestMatchers("/api/v1/anpr/**").permitAll()
                         .requestMatchers("/api/v1/vehicles/verify").permitAll()
+                        .requestMatchers("/api/v1/stations/**").permitAll()
+                        .requestMatchers("/api/v1/journeys/**").permitAll()
+                        .requestMatchers("/api/v1/alerts/**").permitAll()
 
                         // Admin full access
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "STATION_MANAGER", "STATION_OPERATOR", "COMPLIANCE_OFFICER", "AUDITOR")

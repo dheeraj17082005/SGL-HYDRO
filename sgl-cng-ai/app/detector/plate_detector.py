@@ -7,17 +7,44 @@ logger = logging.getLogger(__name__)
 
 class PlateDetector:
     """
-    Pretrained YOLOv8 License Plate Object Detector.
-    Localizes dedicated license plate bounding boxes (x, y, w, h) and returns cropped ROI
-    along with detection confidence.
+    Stage 3: Indian License Plate Localizer & Perspective Rectifier.
+    Extracts license plate bounding boxes (x, y, w, h) from vehicle crops, calculates plate confidence,
+    crops with pad, and rectifies perspective distortion for angled/tilted plates.
     """
 
-    def __init__(self, model_name=None, conf_threshold=0.25):
+    def __init__(self, model_name=None, conf_threshold=0.10):
         self.conf_threshold = conf_threshold
+        self.indian_model = None
         self.model = None
         self.model_loaded = False
 
-        # Prioritize dedicated license plate detection model weights
+        # 1. Dedicated Indian License Plate YOLOv8 Model
+        indian_paths = [
+            "plate_model_indian.pt",
+            os.path.join(os.path.dirname(__file__), "../../plate_model_indian.pt"),
+            os.path.join(os.path.dirname(__file__), "../../../plate_model_indian.pt")
+        ]
+        target_indian = None
+        for p in indian_paths:
+            if p and os.path.exists(p):
+                target_indian = p
+                break
+        if not target_indian:
+            try:
+                from huggingface_hub import hf_hub_download
+                target_indian = hf_hub_download(repo_id="maazsajid/license-plate-yolov8", filename="best.pt")
+            except Exception as e:
+                logger.warning(f"Could not download Indian plate detector ({e}).")
+
+        if target_indian:
+            try:
+                from ultralytics import YOLO
+                self.indian_model = YOLO(target_indian)
+                logger.info(f"Loaded dedicated Indian YOLO plate detector from ({target_indian}).")
+            except Exception as e:
+                logger.warning(f"Could not load Indian YOLO model ({e}).")
+
+        # 2. General License Plate YOLOv8 Model
         possible_paths = [
             model_name,
             "license_plate_yolov8n.pt",
@@ -34,63 +61,88 @@ class PlateDetector:
         if not target_model:
             try:
                 from huggingface_hub import hf_hub_download
-                logger.info("Downloading pretrained YOLO license plate model from Hugging Face (Murd0ck/LicensePlateDetector_YOLOv8n)...")
                 target_model = hf_hub_download(repo_id="Murd0ck/LicensePlateDetector_YOLOv8n", filename="best.pt")
             except Exception as e:
-                logger.warning(f"Could not download dedicated plate detector from HF ({e}). Falling back to yolov8n.pt.")
+                logger.warning(f"Could not download general plate detector ({e}). Falling back to yolov8n.pt.")
                 target_model = "yolov8n.pt"
 
         try:
             from ultralytics import YOLO
             self.model = YOLO(target_model)
             self.model_loaded = True
-            logger.info(f"Loaded pretrained YOLO plate detector model from ({target_model}).")
+            logger.info(f"Loaded general YOLO plate detector model from ({target_model}).")
         except Exception as e:
-            logger.warning(f"Could not load YOLO model ({e}). Using OpenCV morphological detector as fallback.")
+            logger.warning(f"Could not load general YOLO model ({e}). Using OpenCV morphological detector as fallback.")
 
-    def detect_candidates(self, image_bgr):
+    def detect_candidates(self, image_bgr, is_vehicle_crop=False):
         """
-        Detects potential license plate regions in the image using YOLOv8.
-        Supports a two-level multi-scale detection strategy:
-        Level 1: Direct inference on full frame
-        Level 2: Fallback inference on 1.5x upscaled frame for distant/small plates
+        Detects potential license plate regions in the vehicle crop or scene.
         Returns list of tuples: (cropped_roi, (x, y, w, h), detector_confidence)
         """
         if image_bgr is None or image_bgr.size == 0:
             return []
 
         h_img, w_img = image_bgr.shape[:2]
+        candidates = []
 
+        # 1. Primary: dedicated Indian plate model
+        if self.indian_model is not None:
+            try:
+                results_ind = self.indian_model(image_bgr, verbose=False, conf=self.conf_threshold)
+                cands_ind = self._extract_boxes(results_ind, image_bgr, scale_factor=1.0)
+                if cands_ind:
+                    candidates.extend(cands_ind)
+            except Exception as e:
+                logger.error(f"Indian plate model inference error: {e}")
+
+        # 2. General model
         if self.model_loaded and self.model is not None:
             try:
-                # Preserve the model's proven default pass, then use a larger
-                # retry for distant/small plates below.
                 results = self.model(image_bgr, verbose=False, conf=self.conf_threshold)
-                candidates = self._extract_boxes(results, image_bgr, scale_factor=1.0)
-
-                # Retry small crops as well as empty detections. Previously a
-                # weak, tiny box prevented the upscaled pass from ever running.
-                small_candidate = candidates and max(min(box[1][2], box[1][3] * 4) for box in candidates) < 120
-                if (not candidates or small_candidate) and max(w_img, h_img) < 1600:
-                    scale = min(2.0, 1600.0 / max(w_img, h_img))
-                    upscaled = cv2.resize(image_bgr, (round(w_img * scale), round(h_img * scale)), interpolation=cv2.INTER_CUBIC)
-                    results_upscaled = self.model(upscaled, verbose=False, conf=self.conf_threshold, imgsz=1280)
-                    retry = self._extract_boxes(results_upscaled, image_bgr, scale_factor=scale)
-                    if retry:
-                        candidates = (candidates or []) + retry
-                        print(f"[PLATE DETECTOR] HIGH-RES RETRY ({scale:.2f}x) added {len(retry)} candidate(s)")
-
-                if candidates:
-                    candidates.sort(key=lambda item: item[2], reverse=True)
-                    print(f"[PLATE DETECTOR] Threshold: {self.conf_threshold:.2f} | Detections Found: {len(candidates)} | Top Confidence: {candidates[0][2]:.2f}")
-                    return candidates
-                else:
-                    print(f"[PLATE DETECTOR] Threshold: {self.conf_threshold:.2f} | Detections Found: 0")
+                cands_gen = self._extract_boxes(results, image_bgr, scale_factor=1.0)
+                if cands_gen:
+                    candidates.extend(cands_gen)
             except Exception as e:
-                logger.error(f"YOLO inference error: {e}. Falling back to OpenCV contour detector.")
+                logger.error(f"General YOLO inference error: {e}.")
 
-        # Fallback OpenCV contour & aspect-ratio detector if model is unavailable
-        return self._opencv_fallback_detect(image_bgr)
+        # 3. Direct candidate if image itself has plate proportions (e.g. uploaded close-up)
+        aspect = float(w_img) / float(max(1, h_img))
+        if 2.0 <= aspect <= 5.5:
+            candidates.append((image_bgr, (0, 0, w_img, h_img), 0.50))
+        elif not candidates:
+            if is_vehicle_crop:
+                contour_candidates = self._opencv_fallback_detect(image_bgr)
+                if contour_candidates:
+                    candidates.append(contour_candidates[0])
+            else:
+                cx1, cy1 = int(0.12 * w_img), int(0.15 * h_img)
+                cx2, cy2 = int(0.88 * w_img), int(0.85 * h_img)
+                center_roi = image_bgr[cy1:cy2, cx1:cx2]
+                if center_roi.size > 0:
+                    candidates.append((center_roi, (cx1, cy1, cx2 - cx1, cy2 - cy1), 0.35))
+
+        # Deduplicate and sort candidates
+        candidates.sort(key=lambda item: item[2], reverse=True)
+
+        rectified_candidates = []
+        seen_boxes = []
+        for roi, bbox, conf in candidates:
+            # Avoid duplicate overlapping crops
+            bx, by, bw, bh = bbox
+            overlap = False
+            for ox, oy, ow, oh in seen_boxes:
+                if abs(bx - ox) < 40 and abs(by - oy) < 40:
+                    overlap = True
+                    break
+            if overlap:
+                continue
+            seen_boxes.append(bbox)
+            rectified_roi = self._rectify_perspective(roi)
+            rectified_candidates.append((rectified_roi, bbox, conf))
+            if len(rectified_candidates) >= 3:
+                break
+
+        return rectified_candidates
 
     def _extract_boxes(self, results, original_image, scale_factor=1.0):
         h_orig, w_orig = original_image.shape[:2]
@@ -102,7 +154,6 @@ class PlateDetector:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(float)
                 conf = float(box.conf[0].cpu().numpy())
 
-                # Map coordinates back if upscaled
                 if scale_factor != 1.0:
                     x1 /= scale_factor
                     y1 /= scale_factor
@@ -114,10 +165,14 @@ class PlateDetector:
                 w, h = ix2 - ix1, iy2 - iy1
 
                 if w > 10 and h > 10:
-                    # Keep a little more border around plates so OCR does not
-                    # lose edge characters when the detector box is tight.
+                    # If aspect ratio is narrow (< 3.2), Indian plates often have the left IND/state code clipped
+                    if w / max(1, h) < 3.2 and ix1 > 0:
+                        expand_left = int(0.40 * w)
+                        ix1 = max(0, ix1 - expand_left)
+                        w = ix2 - ix1
+
                     pad_x = max(2, int(0.08 * w))
-                    pad_y = max(2, int(0.16 * h))
+                    pad_y = max(2, int(0.15 * h))
                     px1 = max(0, ix1 - pad_x)
                     py1 = max(0, iy1 - pad_y)
                     px2 = min(w_orig, ix2 + pad_x)
@@ -155,9 +210,56 @@ class PlateDetector:
             aspect_ratio = float(w) / float(h) if h > 0 else 0
             area = w * h
 
-            if 600 <= area <= (0.5 * w_img * h_img) and 2.0 <= aspect_ratio <= 6.5:
+            if 300 <= area <= (0.25 * w_img * h_img) and 1.8 <= aspect_ratio <= 5.5:
                 roi = image_bgr[y:y+h, x:x+w]
-                candidates.append((roi, (x, y, w, h), 0.85))
+                candidates.append((roi, (x, y, w, h), 0.50))
 
         candidates.sort(key=lambda item: item[1][2] * item[1][3], reverse=True)
         return candidates
+
+    def _rectify_perspective(self, roi_bgr):
+        """
+        Detects plate boundary corners and applies perspective transformation matrix
+        to produce a rectified horizontal license plate crop.
+        """
+        if roi_bgr is None or roi_bgr.size == 0:
+            return roi_bgr
+
+        h, w = roi_bgr.shape[:2]
+        if h < 20 or w < 40:
+            return roi_bgr
+
+        gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY) if len(roi_bgr.shape) == 3 else roi_bgr.copy()
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blur, 50, 150)
+
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:5]
+
+        for c in contours:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                pts = approx.reshape(4, 2)
+                rect = self._order_points(pts)
+                dst = np.array([
+                    [0, 0],
+                    [w - 1, 0],
+                    [w - 1, h - 1],
+                    [0, h - 1]
+                ], dtype="float32")
+                M = cv2.getPerspectiveTransform(rect, dst)
+                rectified = cv2.warpPerspective(roi_bgr, M, (w, h))
+                return rectified
+
+        return roi_bgr
+
+    def _order_points(self, pts):
+        rect = np.zeros((4, 2), dtype="float32")
+        s = pts.sum(axis=1)
+        rect[0] = pts[np.argmin(s)]
+        rect[2] = pts[np.argmax(s)]
+        diff = np.diff(pts, axis=1)
+        rect[1] = pts[np.argmin(diff)]
+        rect[3] = pts[np.argmax(diff)]
+        return rect
