@@ -20,6 +20,7 @@ function LivePage({stationId,setPage}){
  const videoRef=useRef(null),canvasRef=useRef(null),streamRef=useRef(null),processingRef=useRef(false),matchesRef=useRef([]),cooldownRef=useRef(new Map()),fileInputRef=useRef(null);
  const [mode,setMode]=useState('ENTRY'),[camera,setCamera]=useState('idle'),[busy,setBusy]=useState(false),[result,setResult]=useState(null),[message,setMessage]=useState('Upload an Indian number plate photo or start the live camera to begin.'),[candidate,setCandidate]=useState(''),[history,setHistory]=useState([]);
  const [feedTab,setFeedTab]=useState('UPLOAD'),[uploadedImage,setUploadedImage]=useState(null),[uploadedFile,setUploadedFile]=useState(null),[uploadedFileName,setUploadedFileName]=useState(''),[uploadError,setUploadError]=useState(''),[selectedSample,setSelectedSample]=useState(null);
+ const [detectedBbox,setDetectedBbox]=useState(null),[liveScanStatus,setLiveScanStatus]=useState('READY');
 
  async function processDetection(plate,confidence,rawTimestamp,detectionSource='CAMERA'){
   setCandidate(plate);
@@ -101,11 +102,12 @@ function LivePage({stationId,setPage}){
  async function startCamera(){
   if(camera==='starting'||camera==='live')return;
   setCamera('starting');
+  setLiveScanStatus('CONNECTING');
   setMessage('Allow camera access when your browser asks. Connecting to the camera…');
   try{
-   if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error('This page cannot access a camera. Open it from localhost or a secure https address.');
+   if(!window.isSecureContext&&window.location.hostname!=='localhost'&&window.location.hostname!=='127.0.0.1')throw new Error('This page cannot access a camera. Open it from localhost or a secure https address.');
    let stream;
-   const requests=[{video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:24,max:30}},audio:false},{video:true,audio:false}];
+   const requests=[{video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720},frameRate:{ideal:24,max:30}},audio:false},{video:true,audio:false}];
    let lastError;
    for(const constraints of requests){
     let expired=false,timerId;
@@ -123,14 +125,16 @@ function LivePage({stationId,setPage}){
    video.srcObject=stream;
    await Promise.race([video.play(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Camera opened but video feed did not start.')),8000))]);
    setCamera('live');
-   setMessage(`Camera connected (${track?.getSettings?.().width||'auto'}×${track?.getSettings?.().height||'auto'}). Hold license plate clearly in view.`);
+   setLiveScanStatus('SCANNING');
+   setMessage(`Camera connected (${track?.getSettings?.().width||'auto'}×${track?.getSettings?.().height||'auto'}). Scanning for vehicle license plate…`);
   }catch(e){
    streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;setCamera('error');
+   setLiveScanStatus('OFFLINE');
    const errors={NotAllowedError:'Camera permission blocked. Allow camera access in browser settings.',PermissionDeniedError:'Camera permission blocked. Allow camera access in browser settings.',NotFoundError:'No camera found. Connect a camera, then try again.',NotReadableError:'Camera busy in another app. Close other apps and try again.'};
    setMessage(errors[e.name]||e.message||'Camera could not be started.');
   }
  }
- function stopCamera(){streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setCamera('idle');setBusy(false);}
+ function stopCamera(){streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setCamera('idle');setBusy(false);setDetectedBbox(null);setLiveScanStatus('READY');}
  useEffect(()=>{if(camera==='live'&&streamRef.current&&videoRef.current){videoRef.current.srcObject=streamRef.current;videoRef.current.play().catch(()=>setMessage('Camera is ready but video could not start.'))}},[camera]);
  useEffect(()=>()=>streamRef.current?.getTracks().forEach(track=>track.stop()),[]);
  useEffect(()=>{matchesRef.current=[];setCandidate('');setMessage(mode==='ENTRY'?'Entry mode: eligible detections are verified and added to fueling queue.':'Exit mode: detections match and close an existing station journey.')},[mode]);
@@ -142,31 +146,43 @@ function LivePage({stationId,setPage}){
    processingRef.current=true;setBusy(true);
    try{
     const video=videoRef.current,canvas=canvasRef.current;
-    const captureScale=Math.min(1,1920/video.videoWidth);
+    if(!canvas){processingRef.current=false;setBusy(false);return;}
+    const captureScale=Math.min(1,1280/video.videoWidth);
     canvas.width=Math.round(video.videoWidth*captureScale);
     canvas.height=Math.round(video.videoHeight*captureScale);
     const context=canvas.getContext('2d',{alpha:false});
     context.drawImage(video,0,0,canvas.width,canvas.height);
-    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.88));
-    if(!blob)return;
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.85));
+    if(!blob){processingRef.current=false;setBusy(false);return;}
     const frame=new File([blob],'webcam-frame.jpg',{type:'image/jpeg'});
     const read=await anprApi.recognize(frame);
+    if(read.bbox){
+     setDetectedBbox(read.bbox);
+    }else{
+     setDetectedBbox(null);
+    }
     const plate=read.plateDetected&&read.registrationNumber?String(read.registrationNumber).replace(/[\s-]/g,'').toUpperCase():'';
     const confidence=Number(read.confidence)||0;
     if(!plate||confidence<0.15){
      const recent=matchesRef.current;
-     if(recent.length&&Date.now()-recent.at(-1).at<30000){setMessage(`Holding ${recent.at(-1).plate} steady… waiting for confirming read.`);return;}
+     if(recent.length&&Date.now()-recent.at(-1).at<25000){
+      setLiveScanStatus(`HOLDING ${recent.at(-1).plate}`);
+      setMessage(`Holding ${recent.at(-1).plate} steady… analyzing plate characters.`);
+      return;
+     }
      matchesRef.current=[];setCandidate('');
-     setMessage(read.plateDetected?'Plate in view, but characters are unclear. Move closer and reduce glare.':'No plate in view yet. Hold front or rear plate in camera view.');
+     setLiveScanStatus(read.plateDetected?'PLATE IN VIEW · READING':'SCANNING FOR PLATE');
+     setMessage(read.plateDetected?'Plate detected in view! Reading characters, hold steady...':'Scanning live feed for vehicle license plate...');
      return;
     }
     setCandidate(plate);
+    setLiveScanStatus(`RECOGNIZED: ${plate}`);
     let recent=matchesRef.current.filter(match=>Date.now()-match.at<30000);
     if(recent.length&&recent.at(-1).plate===plate)recent.push({plate,confidence,at:Date.now()});
     else recent=[{plate,confidence,at:Date.now()}];
     matchesRef.current=recent.slice(-2);
-    const needed=confidence>=0.30?1:2;
-    if(recent.length<needed){setMessage(`Reading ${plate}… confirming (${recent.length}/${needed} reads).`);return;}
+    const needed=confidence>=0.25?1:2;
+    if(recent.length<needed){setMessage(`Detected ${plate} (${Math.round(confidence*100)}%)… confirming read.`);return;}
     if(Date.now()-(cooldownRef.current.get(plate)||0)<20000){setMessage(`${plate} was recently processed. Holding duplicate.`);return;}
     cooldownRef.current.set(plate,Date.now());
     matchesRef.current=[];
@@ -176,10 +192,10 @@ function LivePage({stationId,setPage}){
   return()=>{stopped=true;clearInterval(timer)};
  },[camera,mode,stationId,feedTab]);
 
- return <LiveMonitoringDashboard stationId={stationId} setPage={setPage} mode={mode} setMode={setMode} camera={camera} busy={busy} result={result} message={message} candidate={candidate} history={history} videoRef={videoRef} startCamera={startCamera} stopCamera={stopCamera} feedTab={feedTab} setFeedTab={setFeedTab} uploadedImage={uploadedImage} uploadedFile={uploadedFile} uploadedFileName={uploadedFileName} uploadError={uploadError} selectedSample={selectedSample} fileInputRef={fileInputRef} handleFileUpload={handleFileUpload} handleSampleSelect={handleSampleSelect}/>;
+ return <LiveMonitoringDashboard stationId={stationId} setPage={setPage} mode={mode} setMode={setMode} camera={camera} busy={busy} result={result} message={message} candidate={candidate} history={history} videoRef={videoRef} canvasRef={canvasRef} detectedBbox={detectedBbox} liveScanStatus={liveScanStatus} startCamera={startCamera} stopCamera={stopCamera} feedTab={feedTab} setFeedTab={setFeedTab} uploadedImage={uploadedImage} uploadedFile={uploadedFile} uploadedFileName={uploadedFileName} uploadError={uploadError} selectedSample={selectedSample} fileInputRef={fileInputRef} handleFileUpload={handleFileUpload} handleSampleSelect={handleSampleSelect}/>;
 }
 
-function LiveMonitoringDashboard({stationId,setPage,mode,setMode,camera,busy,result,message,candidate,history,videoRef,startCamera,stopCamera,feedTab,setFeedTab,uploadedImage,uploadedFile,uploadedFileName,uploadError,selectedSample,fileInputRef,handleFileUpload,handleSampleSelect}){
+function LiveMonitoringDashboard({stationId,setPage,mode,setMode,camera,busy,result,message,candidate,history,videoRef,canvasRef,detectedBbox,liveScanStatus,startCamera,stopCamera,feedTab,setFeedTab,uploadedImage,uploadedFile,uploadedFileName,uploadError,selectedSample,fileInputRef,handleFileUpload,handleSampleSelect}){
  const [journeys,setJourneys]=useState([]),[backendState,setBackendState]=useState('Checking'),[selectedCamera,setSelectedCamera]=useState('Entry Lane 1'),[now,setNow]=useState(()=>new Date());
  const cameras=['Entry Lane 1','Entry Lane 2','Bay Camera 1','Bay Camera 2','Exit Lane'];
  useEffect(()=>{
@@ -204,6 +220,9 @@ function LiveMonitoringDashboard({stationId,setPage,mode,setMode,camera,busy,res
  const showVideo=camera==='live'&&feedTab==='CAMERA';
 
  return <div className="live-monitor-dashboard">
+  {/* Hidden high-performance capture canvas */}
+  <canvas ref={canvasRef} style={{display:'none'}} aria-hidden="true"/>
+
   <section className="monitor-heading">
    <div>
     <span className="monitor-eyebrow">LIVE MONITORING & ANPR TESTING</span>
@@ -327,6 +346,23 @@ function LiveMonitoringDashboard({stationId,setPage,mode,setMode,camera,busy,res
       <div className="monitor-feed">
        <img className="monitor-demo-image" src="/images/cng-station-login.jpg" alt="Demonstration CNG station camera frame"/>
        <video className="monitor-video" autoPlay playsInline muted ref={videoRef} style={{display:showVideo?'block':'none'}}/>
+
+       {/* Green laser scanning effect & HUD active while camera is running */}
+       {camera==='live' && (
+        <>
+         <div className="scanning-laser"/>
+         <div className="scanning-indicator-badge">
+          <span className="live-dot" style={{width:8,height:8,background:'#22c55e',borderRadius:'50%'}}/>
+          <span>AI CAMERA SCANNING: {liveScanStatus}</span>
+         </div>
+         {detectedBbox && (
+          <div className="live-camera-bbox-indicator" title="Detected License Plate Region">
+           <span className="live-camera-bbox-tag">PLATE DETECTED</span>
+          </div>
+         )}
+        </>
+       )}
+
        <div className="monitor-feed-shade"/>
        <div className="monitor-feed-top">
         <span><i className={camera==='live'?'feed-dot on':'feed-dot'}/>{selectedCamera.toUpperCase()}</span>
@@ -335,12 +371,12 @@ function LiveMonitoringDashboard({stationId,setPage,mode,setMode,camera,busy,res
        </div>
        {camera!=='live'&&<div className="feed-demo-note">{camera==='starting'?'CONNECTING TO CAMERA…':'DEMO FRAME · Not a live camera'}</div>}
        {candidate&&<div className="monitor-read-plate"><small>PLATE READ · {mode}</small><Plate plate={candidate}/></div>}
-       <div className="monitor-feed-bottom"><span>{busy?'Processing camera frame':camera==='live'?'ANPR recognition active':'Station reference image'}</span><span>{mode} MODE</span></div>
+       <div className="monitor-feed-bottom"><span>{busy?'Processing camera frame':camera==='live'?'AI live recognition active':'Station reference image'}</span><span>{mode} MODE</span></div>
       </div>
       <div className="monitor-camera-controls">
        <div>
-        <b>{camera==='live'?'Camera connected':camera==='starting'?'Waiting for camera permission':`${selectedCamera} selected`}</b>
-        <small>{camera==='live'?'Frames are checked by the Python ANPR service.':camera==='starting'?'Approve camera prompt in browser.':'Start camera to run live plate detection.'}</small>
+        <b>{camera==='live'?'Camera connected & scanning':camera==='starting'?'Waiting for camera permission':`${selectedCamera} selected`}</b>
+        <small>{camera==='live'?'YOLOv8 detects plate bounding box; EasyOCR reads characters in real time.':camera==='starting'?'Approve camera prompt in browser.':'Start camera to run live plate detection.'}</small>
        </div>
        <button className={camera==='live'?'monitor-stop-button':'monitor-start-button'} disabled={camera==='starting'} onClick={camera==='live'?stopCamera:startCamera}>
         {camera==='live'?'Stop camera':camera==='starting'?'Connecting…':'Start camera'} <span>{camera==='live'?'■':camera==='starting'?'…':'→'}</span>
